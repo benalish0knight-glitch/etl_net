@@ -10,8 +10,7 @@ services:
       - PYTHONUNBUFFERED=1
       - LOG_LEVEL=info
     restart: unless-stopped
-    networks:
-      - app-network
+
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
       interval: 30s
@@ -19,6 +18,91 @@ services:
       retries: 3
       start_period: 40s
 
-networks:
-  app-network:
-    driver: bridge
+
+
+  postgres:
+    image: postgres:13
+    environment:
+        - POSTGRES_USER=airflow
+        - POSTGRES_PASSWORD=airflow
+        - POSTGRES_DB=airflow
+    ports:
+        - "5432:5432"
+    healthcheck:
+        test: ["CMD", "pg_isready", "-U", "airflow"]
+        interval: 5s
+        retries: 5
+    restart: always
+
+  airflow-init:
+      image: apache/airflow:2.8.1-python3.11
+      env_file:
+          - ${PWD}/.env
+      container_name: airflow_init
+      entrypoint: /bin/bash
+      command: -c "pip install --no-cache-dir -r /opt/airflow/requirements.txt && airflow db migrate && airflow users create --username airflow --password airflow --firstname Airflow --lastname Admin --role Admin --email admin@local.net" 
+      environment:
+          - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+          - AIRFLOW__CORE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
+          - AIRFLOW__CORE__LOAD_EXAMPLES=False
+          - AIRFLOW__WEBSERVER__SECRET_KEY=changeme
+      volumes:
+          - ./dags:/opt/airflow/dags
+          - ./scripts:/opt/airflow/scripts
+          - ./modules:/opt/airflow/modules
+          - ./requirements.txt:/opt/airflow/requirements.txt
+      depends_on:
+          postgres:
+              condition: service_healthy
+      user: "${AIRFLOW_UID:-50000}:0"
+
+  airflow-webserver:
+      image: apache/airflow:2.8.1-python3.11
+      env_file:
+          - ${PWD}/.env
+      container_name: airflow_webserver
+      restart: always
+      command: bash -c "pip install --no-cache-dir -r /opt/airflow/requirements.txt && airflow webserver"
+      ports:
+          - "8080:8080"
+      environment:
+          - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+          - AIRFLOW__CORE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
+          - AIRFLOW__CORE__LOAD_EXAMPLES=False
+          - AIRFLOW__WEBSERVER__SECRET_KEY=changeme
+      volumes:
+          - ./dags:/opt/airflow/dags
+          - ./scripts:/opt/airflow/scripts
+          - ./modules:/opt/airflow/modules
+          - ./requirements.txt:/opt/airflow/requirements.txt
+      depends_on:
+          postgres:
+              condition: service_healthy
+      healthcheck:
+          test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+          interval: 30s
+          timeout: 30s
+          retries: 3
+      user: "${AIRFLOW_UID:-50000}:0"
+
+  airflow-scheduler:
+      image: apache/airflow:2.8.1-python3.11
+      env_file:
+          - ${PWD}/.env
+      container_name: airflow_scheduler
+      restart: always
+      command: bash -c "pip install --no-cache-dir -r /opt/airflow/requirements.txt && airflow scheduler"
+      environment:
+          - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+          - AIRFLOW__CORE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
+          - AIRFLOW__CORE__LOAD_EXAMPLES=False
+          - AIRFLOW__WEBSERVER__SECRET_KEY=changeme
+      volumes:
+          - ./dags:/opt/airflow/dags
+          - ./scripts:/opt/airflow/scripts
+          - ./modules:/opt/airflow/modules
+          - ./requirements.txt:/opt/airflow/requirements.txt
+      depends_on:
+          postgres:
+              condition: service_healthy
+      user: "${AIRFLOW_UID:-50000}:0"
